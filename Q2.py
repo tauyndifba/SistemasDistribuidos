@@ -7,40 +7,40 @@ from queue import Queue
 estado_global = []
 marcadores_enviados = set()
 lock = threading.Lock()
+processos_em_andamento = set()
 
 # Fila de mensagens para cada processo
 mensagens = {1: Queue(), 2: Queue(), 3: Queue()}
+
+# Eventos para coordenar a sincronização
+eventos = {1: threading.Event(), 2: threading.Event(), 3: threading.Event()}
 
 # Função para salvar o estado de um processo
 def salvar_estado(process_id):
     estado = random.randint(1, 100)  # Simula um estado aleatório
     return f"Estado de P{process_id}: {estado}"
 
-# Função para capturar o estado de todos os processos
+# Função para capturar o estado de um processo
 def captura_estado(process_id, processos, iniciar=False):
-    # Inicia a captura de estado se for o processo inicial
-    if iniciar:
-        print(f"Processo P{process_id} iniciou a captura de estado.")
-        # Salva o estado local
-        estado_local = salvar_estado(process_id)
-        estado_global.append(estado_local)
-        print(f"{estado_local} (salvo localmente)")
+    with lock:
+        if process_id in processos_em_andamento:
+            return  # Se o processo já iniciou a captura, evita duplicação
+        processos_em_andamento.add(process_id)
 
-        # Envia marcador para os outros processos
-        for pid in processos:
-            if pid != process_id:
-                enviar_marcador(process_id, pid)
-    else:
-        print(f"Processo P{process_id} recebeu marcador.")
-        # Salva o estado local
-        estado_local = salvar_estado(process_id)
-        estado_global.append(estado_local)
-        print(f"{estado_local} (salvo localmente)")
-
-        # Envia marcador para os outros processos
-        for pid in processos:
-            if pid != process_id:
-                enviar_marcador(process_id, pid)
+    print(f"Processo P{process_id} {'iniciou' if iniciar else 'recebeu'} a captura de estado.")
+    
+    # Salva o estado local
+    estado_local = salvar_estado(process_id)
+    estado_global.append(estado_local)
+    print(f"{estado_local} (salvo localmente)")
+    
+    # Envia marcador para os outros processos
+    for pid in processos:
+        if pid != process_id:
+            enviar_marcador(process_id, pid)
+    
+    # Sinaliza que o processo concluiu sua captura de estado
+    eventos[process_id].set()
 
     # Processa as mensagens na fila do processo
     while not mensagens[process_id].empty():
@@ -53,29 +53,24 @@ def enviar_marcador(from_pid, to_pid):
         if (from_pid, to_pid) not in marcadores_enviados:
             print(f"Processo P{from_pid} enviando marcador para P{to_pid}.")
             marcadores_enviados.add((from_pid, to_pid))
-
-            # Envia o marcador para o outro processo
             mensagens[to_pid].put(f"Marcador de P{from_pid} para P{to_pid}")
-            # Chama a captura de estado do outro processo
-            captura_estado(to_pid, processos=[1, 2, 3])
+            time.sleep(1)
+            threading.Thread(target=captura_estado, args=(to_pid, [1, 2, 3])).start()
 
 # Função para simular a rede distribuída
 def rede_distribuida():
     processos = [1, 2, 3]
-    # Processo 1 inicia a captura de estado
     captura_estado(1, processos, iniciar=True)
-    # Espera algum tempo para simular comunicação entre processos
-    time.sleep(2)
-
-    # Agora, os processos que receberam mensagens devem processá-las
+    
+    # Espera a conclusão de todos os processos
     for pid in processos:
-        captura_estado(pid, processos)
-
+        eventos[pid].wait()
+    
     print("\nEstado Global Capturado:")
     for estado in estado_global:
         print(estado)
 
-# Criação de threads para simular processos em paralelo
+# Criação de thread principal para simular os processos
 t1 = threading.Thread(target=rede_distribuida)
 t1.start()
 t1.join()
